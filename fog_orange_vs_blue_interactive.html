@@ -1,0 +1,196 @@
+
+<style>
+#fog-demo { font-family: var(--font-sans); padding: 1rem 0; }
+.fog-canvas-wrap { display: flex; gap: 12px; }
+.fog-col { flex: 1; }
+.fog-label { font-size: 13px; font-weight: 500; margin-bottom: 6px; text-align: center; }
+canvas.fog-c { width: 100%; border-radius: 8px; display: block; }
+.controls { display: flex; gap: 20px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+.ctrl-group { flex: 1; min-width: 140px; }
+.ctrl-group label { font-size: 12px; color: var(--color-text-secondary); display: block; margin-bottom: 4px; }
+.ctrl-row { display: flex; align-items: center; gap: 8px; }
+.ctrl-row span { font-size: 13px; min-width: 36px; text-align: right; }
+.result-bar { margin-top: 14px; background: var(--color-background-secondary); border-radius: 8px; padding: 12px 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+.res { flex: 1; min-width: 100px; }
+.res-lbl { font-size: 12px; color: var(--color-text-secondary); }
+.res-val { font-size: 20px; font-weight: 500; }
+</style>
+<div id="fog-demo">
+  <h2 class="sr-only">Interactive fog light comparison: orange vs blue</h2>
+  <div class="fog-canvas-wrap">
+    <div class="fog-col">
+      <div class="fog-label" style="color:#f5a623">🟠 Orange / amber light (~590 nm)</div>
+      <canvas class="fog-c" id="c-orange" width="320" height="220"></canvas>
+    </div>
+    <div class="fog-col">
+      <div class="fog-label" style="color:#5b8de8">🔵 Blue / white light (~450 nm)</div>
+      <canvas class="fog-c" id="c-blue" width="320" height="220"></canvas>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="ctrl-group">
+      <label>Fog density</label>
+      <div class="ctrl-row">
+        <input type="range" id="density" min="0" max="100" value="55" style="flex:1">
+        <span id="density-lbl">55%</span>
+      </div>
+    </div>
+    <div class="ctrl-group">
+      <label>Viewing angle (driver's eye)</label>
+      <div class="ctrl-row">
+        <input type="range" id="angle" min="0" max="40" value="18" style="flex:1">
+        <span id="angle-lbl">18°</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="result-bar">
+    <div class="res">
+      <div class="res-lbl">Orange scatter index</div>
+      <div class="res-val" id="r-orange" style="color:#f5a623">—</div>
+    </div>
+    <div class="res">
+      <div class="res-lbl">Blue scatter index</div>
+      <div class="res-val" id="r-blue" style="color:#5b8de8">—</div>
+    </div>
+    <div class="res">
+      <div class="res-lbl">Blue scatters more by</div>
+      <div class="res-val" id="r-ratio" style="color:var(--color-text-primary)">—</div>
+    </div>
+    <div class="res">
+      <div class="res-lbl">Visibility advantage</div>
+      <div class="res-val" id="r-vis" style="color:#5cb85c">—</div>
+    </div>
+  </div>
+</div>
+<script>
+const ORANGE_WL = 590, BLUE_WL = 450;
+const canvO = document.getElementById('c-orange');
+const canvB = document.getElementById('c-blue');
+const ctxO = canvO.getContext('2d');
+const ctxB = canvB.getContext('2d');
+
+function rayleigh(wl) {
+  return Math.pow(500 / wl, 4);
+}
+
+function drawFogScene(ctx, wl, density, angleDeg, W, H) {
+  const isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const bgColor = isDark ? '#0e131a' : '#1a1e26';
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, W, H);
+
+  const isOrange = wl > 500;
+  const lightColor = isOrange ? '#f5a623' : '#9bbfff';
+  const scatter = rayleigh(wl);
+  const norm = density / 100;
+  const halfAngle = (angleDeg * Math.PI) / 180;
+
+  const srcX = isOrange ? 18 : 18;
+  const srcY = H / 2;
+  const beamLen = W - 30;
+
+  // Fog haze gradient fill
+  const fogAlpha = norm * 0.55 * scatter;
+  const grad = ctx.createLinearGradient(srcX, srcY, srcX + beamLen, srcY);
+  grad.addColorStop(0, `${lightColor}00`);
+  grad.addColorStop(0.3, `${lightColor}${Math.round(Math.min(fogAlpha * 0.4, 0.45) * 255).toString(16).padStart(2,'0')}`);
+  grad.addColorStop(1, `${lightColor}00`);
+
+  // Beam cone
+  ctx.beginPath();
+  ctx.moveTo(srcX, srcY);
+  ctx.lineTo(srcX + beamLen, srcY - Math.tan(halfAngle) * beamLen);
+  ctx.lineTo(srcX + beamLen, srcY + Math.tan(halfAngle) * beamLen);
+  ctx.closePath();
+  const beamGrad = ctx.createLinearGradient(srcX, srcY, srcX + beamLen, srcY);
+  const beamAlpha = Math.max(0.08, 0.45 - norm * scatter * 0.35);
+  beamGrad.addColorStop(0, `${lightColor}${Math.round(beamAlpha * 255).toString(16).padStart(2,'0')}`);
+  beamGrad.addColorStop(1, `${lightColor}08`);
+  ctx.fillStyle = beamGrad;
+  ctx.fill();
+
+  // Fog backdrop glow — bigger for blue
+  const glowR = 60 + norm * scatter * 90;
+  const glowGrad = ctx.createRadialGradient(srcX + 40, srcY, 0, srcX + 40, srcY, glowR);
+  const gi = Math.min(norm * scatter * 0.6, 0.85);
+  glowGrad.addColorStop(0, `${lightColor}${Math.round(gi * 255).toString(16).padStart(2,'0')}`);
+  glowGrad.addColorStop(1, `${lightColor}00`);
+  ctx.fillStyle = glowGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Draw fog droplets as small circles
+  const seed = 42;
+  const rng = (i) => {
+    let x = Math.sin(seed + i) * 10000;
+    return x - Math.floor(x);
+  };
+  const nDrops = Math.round(norm * 80);
+  for (let i = 0; i < nDrops; i++) {
+    const dx = 30 + rng(i * 3) * (W - 50);
+    const dy = 15 + rng(i * 3 + 1) * (H - 30);
+    const r = 1.5 + rng(i * 3 + 2) * 2.5;
+    // Is drop inside beam cone?
+    const bx = dx - srcX;
+    const by = dy - srcY;
+    const inBeam = bx > 0 && bx < beamLen && Math.abs(by) < Math.tan(halfAngle) * bx + 4;
+    const dropAlpha = inBeam ? Math.min(norm * scatter * 0.9, 0.9) : norm * 0.25;
+    ctx.beginPath();
+    ctx.arc(dx, dy, r, 0, Math.PI * 2);
+    ctx.fillStyle = `${lightColor}${Math.round(dropAlpha * 255).toString(16).padStart(2,'0')}`;
+    ctx.fill();
+    // Scatter ray from in-beam drops
+    if (inBeam && rng(i * 7) < norm * scatter * 0.5) {
+      const rDir = rng(i * 11) * Math.PI * 2;
+      const rLen = 6 + rng(i * 13) * 10;
+      ctx.beginPath();
+      ctx.moveTo(dx, dy);
+      ctx.lineTo(dx + Math.cos(rDir) * rLen, dy + Math.sin(rDir) * rLen);
+      ctx.strokeStyle = `${lightColor}${Math.round(Math.min(norm * scatter * 0.6, 0.7) * 255).toString(16).padStart(2,'0')}`;
+      ctx.lineWidth = 0.7;
+      ctx.stroke();
+    }
+  }
+
+  // Headlamp circle
+  ctx.beginPath();
+  ctx.arc(srcX, srcY, 7, 0, Math.PI * 2);
+  ctx.fillStyle = isOrange ? '#fff7d0' : '#ddeeff';
+  ctx.fill();
+  ctx.strokeStyle = lightColor;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Wavelength label
+  ctx.fillStyle = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(200,200,200,0.8)';
+  ctx.font = '11px var(--font-sans, sans-serif)';
+  ctx.fillText(`λ = ${wl} nm`, W - 72, H - 10);
+}
+
+function update() {
+  const density = +document.getElementById('density').value;
+  const angle = +document.getElementById('angle').value;
+  document.getElementById('density-lbl').textContent = density + '%';
+  document.getElementById('angle-lbl').textContent = angle + '°';
+
+  const W = canvO.width, H = canvO.height;
+  drawFogScene(ctxO, ORANGE_WL, density, angle, W, H);
+  drawFogScene(ctxB, BLUE_WL,   density, angle, W, H);
+
+  const sO = rayleigh(ORANGE_WL) * (density / 100);
+  const sB = rayleigh(BLUE_WL)   * (density / 100);
+  const ratio = sB / sO;
+  const visAdv = Math.round((1 - 1 / ratio) * 100);
+
+  document.getElementById('r-orange').textContent = sO.toFixed(2);
+  document.getElementById('r-blue').textContent   = sB.toFixed(2);
+  document.getElementById('r-ratio').textContent  = ratio.toFixed(1) + '×';
+  document.getElementById('r-vis').textContent    = '+' + visAdv + '%';
+}
+
+document.getElementById('density').addEventListener('input', update);
+document.getElementById('angle').addEventListener('input', update);
+update();
+</script>
